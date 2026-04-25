@@ -18,6 +18,7 @@ package caldav
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -565,7 +566,7 @@ X-WR-CALNAME:List title
 PRODID:-//Vikunja Todo App//EN
 BEGIN:VTODO
 UID:randomuid
-DTSTAMP:20181201T011205Z
+DTSTAMP:20181201T011201Z
 SUMMARY:Task 1
 DTSTART:20181201T011203Z
 DTEND:20181201T011204Z
@@ -679,9 +680,10 @@ X-WR-CALNAME:List title
 PRODID:-//Vikunja Todo App//EN
 BEGIN:VTODO
 UID:randomuid_parent
-DTSTAMP:20181201T011205Z
+DTSTAMP:20181201T011201Z
 SUMMARY:Parent Task
 DESCRIPTION:A parent task
+STATUS:NEEDS-ACTION
 CREATED:20181201T011201Z
 PRIORITY:3
 LAST-MODIFIED:20181201T011205Z
@@ -693,6 +695,7 @@ UID:randomuid_child_1
 DTSTAMP:20181201T011204Z
 SUMMARY:Subtask 1
 DESCRIPTION:The first child task
+STATUS:NEEDS-ACTION
 CREATED:20181201T011204Z
 LAST-MODIFIED:20181201T011204Z
 RELATED-TO;RELTYPE=PARENT:randomuid_parent
@@ -702,6 +705,7 @@ UID:randomuid_child_2
 DTSTAMP:20181201T011204Z
 SUMMARY:Subtask 2
 DESCRIPTION:The second child task
+STATUS:NEEDS-ACTION
 CREATED:20181201T011204Z
 LAST-MODIFIED:20181201T011204Z
 RELATED-TO;RELTYPE=PARENT:randomuid_parent
@@ -729,4 +733,37 @@ func TestCaldavTimeToTimestamp_NoTZID(t *testing.T) {
 	if !got.Equal(want) || got.Location().String() != config.GetTimeZone().String() {
 		t.Fatalf("caldavTimeToTimestamp() = %v, want %v", got, want)
 	}
+}
+
+// TestGetCaldavTodosForTasksDTSTAMP verifies that DTSTAMP uses the task's Created
+// time (iCal object creation), not Updated (last modification). RFC 5545 §3.7.4:
+// DTSTAMP is the date-time the iCalendar object was created; LAST-MODIFIED tracks
+// changes. Using Updated caused iOS Reminders to think tasks changed on every sync.
+func TestGetCaldavTodosForTasksDTSTAMP(t *testing.T) {
+	config.InitDefaultConfig()
+	log.InitLogger()
+
+	t.Run("DTSTAMP uses Created time, not Updated time", func(t *testing.T) {
+		list := &models.ProjectWithTasksAndBuckets{
+			Project: models.Project{Title: "test"},
+		}
+		created := time.Unix(1543626721, 0).UTC()
+		updated := time.Unix(1543626725, 0).UTC()
+		tasks := []*models.TaskWithComments{
+			{Task: models.Task{
+				Title:   "Task",
+				UID:     "dtstamp-test-uid",
+				Created: created,
+				Updated: updated,
+			}},
+		}
+		result := GetCaldavTodosForTasks(list, tasks)
+		// DTSTAMP must reflect Created (20181201T011201Z), not Updated (20181201T011205Z)
+		if !strings.Contains(result, "DTSTAMP:20181201T011201Z") {
+			t.Errorf("expected DTSTAMP:20181201T011201Z (Created), got:\n%s", result)
+		}
+		if strings.Contains(result, "DTSTAMP:20181201T011205Z") {
+			t.Errorf("DTSTAMP must not use Updated time (20181201T011205Z):\n%s", result)
+		}
+	})
 }

@@ -142,13 +142,66 @@ func (vcls *VikunjaCaldavProjectStorage) GetResources(rpath string, withChildren
 		return []data.Resource{r}, nil
 	}
 
+	// Bulk-query the latest task update time per project in a single DB call.
+	// This is the key data iOS uses to decide whether to fetch new tasks:
+	// if the ctag/etag for a calendar collection does not change, iOS skips it.
+	// We open a fresh session here because the previous session's internal state
+	// (from the complex CTE in ReadAll) is incompatible with further queries.
+	latestTaskTimes := map[int64]time.Time{}
+	if len(projects) > 0 {
+		// Scan MAX(updated) as string because aggregate functions return TEXT in
+		// SQLite and xorm cannot auto-convert the value to time.Time.
+		type projectMaxTask struct {
+			ProjectID  int64  `xorm:"project_id"`
+			MaxUpdated string `xorm:"max_updated"`
+		}
+		projectIDs := make([]int64, len(projects))
+		for i, l := range projects {
+			projectIDs[i] = l.ID
+		}
+		var results []projectMaxTask
+		s2 := db.NewSession()
+		defer s2.Close()
+		if err := s2.
+			Table("tasks").
+			Select("project_id, MAX(updated) AS max_updated").
+			In("project_id", projectIDs).
+			GroupBy("project_id").
+			Find(&results); err != nil {
+			_ = s2.Rollback()
+			return nil, err
+		}
+		if err := s2.Commit(); err != nil {
+			return nil, err
+		}
+		// Parse the datetime string returned by the DB; the format depends on the
+		// database driver (SQLite returns "2006-01-02 15:04:05±07:00", MySQL/PG vary).
+		layouts := []string{
+			time.RFC3339Nano,
+			time.RFC3339,
+			"2006-01-02 15:04:05.999999999-07:00",
+			"2006-01-02 15:04:05-07:00",
+			"2006-01-02 15:04:05.999999999",
+			"2006-01-02 15:04:05",
+		}
+		for _, r := range results {
+			for _, layout := range layouts {
+				if t, err2 := time.Parse(layout, r.MaxUpdated); err2 == nil {
+					latestTaskTimes[r.ProjectID] = t
+					break
+				}
+			}
+		}
+	}
+
 	var resources []data.Resource
 	for _, l := range projects {
 		rr := VikunjaProjectResourceAdapter{
 			project: &models.ProjectWithTasksAndBuckets{
 				Project: *l,
 			},
-			isCollection: true,
+			isCollection:     true,
+			latestTaskUpdate: latestTaskTimes[l.ID],
 		}
 		r := data.NewResource(ProjectBasePath+"/"+strconv.FormatInt(l.ID, 10), &rr)
 		r.Name = l.Title
@@ -677,6 +730,11 @@ type VikunjaProjectResourceAdapter struct {
 	projectTasks []*models.TaskWithComments
 	task         *models.Task
 
+	// latestTaskUpdate is the maximum Updated time across all tasks in the project.
+	// It is populated by a bulk query during home-set PROPFIND to avoid loading
+	// all tasks just to compute the collection ctag.
+	latestTaskUpdate time.Time
+
 	isPrincipal  bool
 	isCollection bool
 }
@@ -702,6 +760,9 @@ func (vlra *VikunjaProjectResourceAdapter) CalculateEtag() string {
 	// so that the etag (and derived ctag/sync-token) changes whenever
 	// any task in the project is added, modified, or deleted.
 	latest := vlra.project.Updated
+	if vlra.latestTaskUpdate.After(latest) {
+		latest = vlra.latestTaskUpdate
+	}
 	for _, t := range vlra.projectTasks {
 		if t.Updated.After(latest) {
 			latest = t.Updated
@@ -737,7 +798,16 @@ func (vlra *VikunjaProjectResourceAdapter) GetModTime() time.Time {
 	}
 
 	if vlra.project != nil {
-		return vlra.project.Updated
+		latest := vlra.project.Updated
+		if vlra.latestTaskUpdate.After(latest) {
+			latest = vlra.latestTaskUpdate
+		}
+		for _, t := range vlra.projectTasks {
+			if t.Updated.After(latest) {
+				latest = t.Updated
+			}
+		}
+		return latest
 	}
 
 	return time.Time{}

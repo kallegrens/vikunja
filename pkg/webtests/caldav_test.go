@@ -1008,3 +1008,85 @@ func TestCaldavAPITokenAuth(t *testing.T) {
 		assert.False(t, result, "invalid API token should be rejected")
 	})
 }
+
+// TestCaldavSync verifies that a home-set Depth:1 PROPFIND returns an updated ctag
+// after a task is created, so that iOS Reminders detects the change and fetches it.
+func TestCaldavSync(t *testing.T) {
+	t.Run("Home-set ctag changes after a task is created", func(t *testing.T) {
+		e, _ := setupTestEnv()
+
+		// getCtag returns the getctag value for a project by ID from a Depth:1
+		// PROPFIND on the CalDAV home set.
+		getCtag := func(projectID string) string {
+			propfindBody := `<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:" xmlns:CS="http://calendarserver.org/ns/">
+    <D:prop><CS:getctag/></D:prop>
+</D:propfind>`
+			c, rec := createRequest(e, "PROPFIND", propfindBody, nil, nil)
+			c.Request().Header.Set(echo.HeaderContentType, echo.MIMETextXML)
+			c.Request().Header.Set("Depth", "1")
+			c.Request().URL.Path = caldav.ProjectBasePath + "/"
+			c.Request().RequestURI = caldav.ProjectBasePath + "/"
+			result, err := caldav.BasicAuth(c, testuser15.Username, "12345678")
+			require.NoError(t, err)
+			require.True(t, result)
+			require.NoError(t, caldav.ProjectHandler(c))
+			require.Equal(t, 207, rec.Result().StatusCode)
+
+			type Propstat struct {
+				Prop struct {
+					Getctag string `xml:"http://calendarserver.org/ns/ getctag"`
+				} `xml:"prop"`
+				Status string `xml:"status"`
+			}
+			type Response struct {
+				Href      string     `xml:"href"`
+				Propstats []Propstat `xml:"propstat"`
+			}
+			type Multistatus struct {
+				Responses []Response `xml:"response"`
+			}
+			var ms Multistatus
+			require.NoError(t, xml.Unmarshal(rec.Body.Bytes(), &ms))
+			for _, resp := range ms.Responses {
+				if strings.Contains(resp.Href, "/"+projectID) {
+					for _, ps := range resp.Propstats {
+						if strings.Contains(ps.Status, "200") && ps.Prop.Getctag != "" {
+							return ps.Prop.Getctag
+						}
+					}
+				}
+			}
+			return ""
+		}
+
+		ctag1 := getCtag("36")
+		require.NotEmpty(t, ctag1, "project 36 should have a ctag before task creation")
+
+		// Create a new task in project 36 via CalDAV PUT.
+		const vtodo = `BEGIN:VCALENDAR
+VERSION:2.0
+X-PUBLISHED-TTL:PT4H
+X-WR-CALNAME:Project 36 for Caldav tests
+PRODID:-//Vikunja Todo App//EN
+BEGIN:VTODO
+UID:uid-ctag-sync-test
+DTSTAMP:20230301T073337Z
+SUMMARY:Ctag sync test task
+CREATED:20230301T073337Z
+LAST-MODIFIED:20230301T073337Z
+STATUS:NEEDS-ACTION
+END:VTODO
+END:VCALENDAR`
+		rec2, err := newCaldavTestRequestWithUser(
+			t, e, http.MethodPut, caldav.TaskHandler, &testuser15, vtodo,
+			nil, map[string]string{"project": "36", "task": "uid-ctag-sync-test"},
+		)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusCreated, rec2.Result().StatusCode)
+
+		ctag2 := getCtag("36")
+		require.NotEmpty(t, ctag2, "project 36 should still have a ctag after task creation")
+		assert.NotEqual(t, ctag1, ctag2, "ctag for project 36 must change after a task is created")
+	})
+}

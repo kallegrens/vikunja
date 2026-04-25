@@ -186,6 +186,9 @@ DESCRIPTION:` + escapeICalText(t.Description)
 			caldavtodos += `
 COMPLETED:` + makeCalDavTimeFromTimeStamp(t.Completed) + `
 STATUS:COMPLETED`
+		} else {
+			caldavtodos += `
+STATUS:NEEDS-ACTION`
 		}
 		if t.Organizer != nil {
 			caldavtodos += `

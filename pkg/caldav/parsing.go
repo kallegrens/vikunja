@@ -215,7 +215,7 @@ func GetCaldavTodosForTasks(project *models.ProjectWithTasksAndBuckets, projectT
 		}
 
 		caldavtodos = append(caldavtodos, &Todo{
-			Timestamp:   t.Updated,
+			Timestamp:   t.Created,
 			UID:         t.UID,
 			Summary:     t.Title,
 			Description: t.Description,
