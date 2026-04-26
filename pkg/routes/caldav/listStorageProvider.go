@@ -149,47 +149,40 @@ func (vcls *VikunjaCaldavProjectStorage) GetResources(rpath string, withChildren
 	// (from the complex CTE in ReadAll) is incompatible with further queries.
 	latestTaskTimes := map[int64]time.Time{}
 	if len(projects) > 0 {
-		// Scan MAX(updated) as string because aggregate functions return TEXT in
-		// SQLite and xorm cannot auto-convert the value to time.Time.
-		type projectMaxTask struct {
-			ProjectID  int64  `xorm:"project_id"`
-			MaxUpdated string `xorm:"max_updated"`
+		// Query the latest task update time per project by selecting the real
+		// `updated` column (not a MAX aggregate). Aggregate functions return
+		// values in DB-driver-specific formats that xorm cannot reliably map to
+		// time.Time across all databases (e.g. PostgreSQL lib/pq returns a
+		// time.Time which xorm then serialises as a Go string in a format not
+		// matched by any known layout). Selecting the actual column lets xorm use
+		// its native time.Time mapping on SQLite, PostgreSQL, and MySQL.
+		// Sorting DESC and taking the first row per project in Go gives the max.
+		type taskProjectUpdate struct {
+			ProjectID int64     `xorm:"project_id"`
+			Updated   time.Time `xorm:"updated"`
 		}
 		projectIDs := make([]int64, len(projects))
 		for i, l := range projects {
 			projectIDs[i] = l.ID
 		}
-		var results []projectMaxTask
+		var taskUpdates []taskProjectUpdate
 		s2 := db.NewSession()
 		defer s2.Close()
 		if err := s2.
 			Table("tasks").
-			Select("project_id, MAX(updated) AS max_updated").
+			Select("project_id, updated").
 			In("project_id", projectIDs).
-			GroupBy("project_id").
-			Find(&results); err != nil {
+			Desc("updated").
+			Find(&taskUpdates); err != nil {
 			_ = s2.Rollback()
 			return nil, err
 		}
 		if err := s2.Commit(); err != nil {
 			return nil, err
 		}
-		// Parse the datetime string returned by the DB; the format depends on the
-		// database driver (SQLite returns "2006-01-02 15:04:05±07:00", MySQL/PG vary).
-		layouts := []string{
-			time.RFC3339Nano,
-			time.RFC3339,
-			"2006-01-02 15:04:05.999999999-07:00",
-			"2006-01-02 15:04:05-07:00",
-			"2006-01-02 15:04:05.999999999",
-			"2006-01-02 15:04:05",
-		}
-		for _, r := range results {
-			for _, layout := range layouts {
-				if t, err2 := time.Parse(layout, r.MaxUpdated); err2 == nil {
-					latestTaskTimes[r.ProjectID] = t
-					break
-				}
+		for _, tu := range taskUpdates {
+			if _, exists := latestTaskTimes[tu.ProjectID]; !exists {
+				latestTaskTimes[tu.ProjectID] = tu.Updated
 			}
 		}
 	}
