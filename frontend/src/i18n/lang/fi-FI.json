@@ -6,6 +6,9 @@
 	"home": {
 		"welcomeNight": "Hyvää Yötä {username}!",
 		"welcomeMorning": "Hyvää Huomenta {username}!",
+		"welcomeMorningBack": "Tervetuloa takaisin, {username}",
+		"welcomeTuesday": "Hyvää tiistaita, {username}",
+		"welcomeWednesdayMid": "On jo keskiviikko, {username}",
 		"welcomeDay": "Moi {username}!",
 		"welcomeEvening": "Hyvää Iltaa {username}!",
 		"lastViewed": "Viimeksi katsottu",
@@ -344,8 +347,7 @@
 			"default": "Oletus",
 			"month": "Kuukausi",
 			"day": "Päivä",
-			"hour": "Tunti",
-			"range": "Ajanjakso"
+			"hour": "Tunti"
 		},
 		"table": {
 			"title": "Taulukko",
@@ -354,7 +356,6 @@
 		"kanban": {
 			"title": "Kanban",
 			"limit": "Raja: {limit}",
-			"noLimit": "Ei Asetettu",
 			"doneBucket": "Valmiit sarake",
 			"doneBucketHint": "Kaikki tähän sarakkeeseen lisätyt tehtävät merkitään automaattisesti valmiiksi.",
 			"doneBucketHintExtended": "Kaikki tähän sarakkeeseen lisätyt tehtävät merkitään automaattisesti valmiiksi. Muualla valmiiksi merkityt tehtävät siirretään myös.",

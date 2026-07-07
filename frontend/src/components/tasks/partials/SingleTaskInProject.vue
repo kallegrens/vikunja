@@ -326,9 +326,17 @@ const isOverdue = computed(() => (
 let oldTask
 
 async function markAsDone(checked: boolean, wasReverted: boolean = false) {
-	const updateFunc = async () => {
-		oldTask = {...task.value}
-		const newTask = await taskStore.update(task.value)
+	oldTask = {...task.value}
+
+	// Fire the request immediately and with the intended done value snapshotted, so a re-render or
+	// teardown during the animation delay can neither drop the save nor make it send a stale state.
+	const updatePromise = taskStore.update({
+		...task.value,
+		done: checked,
+	})
+
+	const finish = async () => {
+		const newTask = await updatePromise
 		task.value = newTask
 
 		updateDueDate()
@@ -354,9 +362,9 @@ async function markAsDone(checked: boolean, wasReverted: boolean = false) {
 	}
 
 	if (checked) {
-		setTimeout(updateFunc, 300) // Delay it to show the animation when marking a task as done
+		setTimeout(finish, 300) // Delay only the follow-up to show the animation when marking a task as done
 	} else {
-		await updateFunc() // Don't delay it when un-marking it as it doesn't have an animation the other way around
+		await finish() // Don't delay it when un-marking it as it doesn't have an animation the other way around
 	}
 }
 
@@ -383,7 +391,7 @@ function hasTextSelected() {
 
 function openTaskDetail(event: MouseEvent | KeyboardEvent) {
 	if (event.target instanceof HTMLElement) {
-		const isInteractiveElement = event.target.closest('a, button, .favorite, [role="button"]')
+		const isInteractiveElement = event.target.closest('a, button, label, input[type="checkbox"], .favorite, [role="button"]')
 		if (isInteractiveElement || hasTextSelected()) {
 			return
 		}
@@ -535,6 +543,23 @@ defineExpose({
 
 		span {
 			display: none;
+		}
+
+		// Extend the hit target to >=44x44 without affecting layout (WCAG 2.5.5).
+		.base-checkbox__label {
+			position: relative;
+
+			&::before {
+				content: '';
+				position: absolute;
+				inset-block-start: 50%;
+				inset-inline-start: 50%;
+				min-block-size: 44px;
+				min-inline-size: 44px;
+				block-size: 100%;
+				inline-size: 100%;
+				transform: translate(-50%, -50%);
+			}
 		}
 	}
 

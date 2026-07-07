@@ -65,6 +65,10 @@ func BasicAuth(c *echo.Context, username, password string) (bool, error) {
 			return false, nil
 		}
 		if u != nil {
+			if u.IsBot() {
+				log.Warningf("CalDAV auth rejected for bot user %d", u.ID)
+				return false, nil
+			}
 			c.Set("userBasicAuth", u)
 			return true, nil
 		}
@@ -84,7 +88,7 @@ func BasicAuth(c *echo.Context, username, password string) (bool, error) {
 		return false, nil
 	}
 	if u == nil {
-		u, err = user.CheckUserCredentials(s, credentials)
+		u, err = user.CheckUserCredentials(c.Request().Context(), s, credentials)
 		if err != nil {
 			log.Errorf("Error during basic auth for caldav: %v", err)
 			return false, nil
@@ -103,6 +107,10 @@ func BasicAuth(c *echo.Context, username, password string) (bool, error) {
 		}
 	}
 	if u != nil && err == nil {
+		if u.IsBot() {
+			log.Warningf("CalDAV basic auth rejected for bot user %d", u.ID)
+			return false, nil
+		}
 		c.Set("userBasicAuth", u)
 		return true, nil
 	}

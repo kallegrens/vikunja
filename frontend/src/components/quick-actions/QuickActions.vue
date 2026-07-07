@@ -2,6 +2,7 @@
 	<Modal
 		:enabled="active"
 		:overflow="isNewTaskCommand"
+		variant="top"
 		@close="closeQuickActions"
 	>
 		<div
@@ -135,6 +136,7 @@ import type {ITask} from '@/modelTypes/ITask'
 import type {IProject} from '@/modelTypes/IProject'
 import type {IAbstract} from '@/modelTypes/IAbstract'
 import {isSavedFilter} from '@/services/savedFilter'
+import type {TaskFilterParams} from '@/services/taskCollection'
 
 const {t} = useI18n({useScope: 'global'})
 const router = useRouter()
@@ -190,12 +192,17 @@ watchEffect(() => {
 let focusRafId: number | null = null
 
 watchEffect(() => {
-	if (active.value && isQuickAddMode) {
-		selectedCmd.value = commands.value.newTask
+	if (active.value) {
+		if (isQuickAddMode) {
+			selectedCmd.value = commands.value.newTask
+		}
 
 		// The input may not be focusable yet due to:
-		// 1. Modal transition (v-if + <Transition appear>) delaying DOM readiness
-		// 2. Electron window not yet visible (shown after did-finish-load)
+		// 1. Modal mounts the <dialog> via v-if and then calls showModal() in a
+		//    follow-up flush, so v-focus fires while the dialog is still closed
+		//    and the focus() call is dropped.
+		// 2. In quick-add mode the Electron window isn't visible until
+		//    did-finish-load.
 		// Retry with rAF until focus actually lands on the input.
 		const tryFocus = () => {
 			if (!active.value) {
@@ -444,9 +451,11 @@ function searchTasks() {
 		}
 	}
 
-	const params = {
+	const params: Partial<TaskFilterParams> = {
 		s: text,
-		sort_by: 'done',
+		// undone tasks first, most relevant first within each group (relevance is
+		// only honored on backends that can score the search, see the API docs)
+		sort_by: ['done', 'relevance'],
 		filter,
 	}
 
@@ -699,14 +708,15 @@ function reset() {
 
 <style lang="scss" scoped>
 .quick-actions {
+	// global Bulma .card styles are gone (ported into Card.vue, scoped),
+	// so this bare .card div needs its own card visuals
+	background-color: var(--white);
+	border-radius: $radius;
+	border: 1px solid var(--card-border-color);
+	box-shadow: var(--shadow-sm);
+	color: var(--text);
 	overflow: hidden;
 	justify-content: flex-start !important;
-
-	// FIXME: changed position should be an option of the modal
-	:deep(.modal-content) {
-		inset-block-start: 3rem;
-		transform: translate(-50%, 0);
-	}
 
 	&.is-quick-add-mode {
 		padding: 0;

@@ -170,20 +170,16 @@ func parseFilterFromExpression(f fexpr.ExprGroup, loc *time.Location) (filter *t
 	return filter, nil
 }
 
-func getTaskFiltersFromFilterString(filter string, filterTimezone string) (filters []*taskFilter, err error) {
-
-	if filter == "" {
-		return
-	}
-
+// preprocessFilterString rewrites the human filter syntax (in / not in / like)
+// into fexpr sigils and quotes bare values so fexpr.Parse accepts them. Shared
+// by every entity that filters with the task grammar.
+func preprocessFilterString(filter string) string {
 	filter = strings.ReplaceAll(filter, " not in ", " "+string(fexpr.SignAnyNeq)+" ")
 	filter = strings.ReplaceAll(filter, " in ", " ?= ")
 	filter = strings.ReplaceAll(filter, " like ", " ~ ")
 
-	// Regex pattern to match filter expressions
 	re := regexp.MustCompile(`(\w+)\s*(>=|<=|!=|~|\?=|\?!=|=|>|<)\s*([^&|()]+)`)
-
-	filter = re.ReplaceAllStringFunc(filter, func(match string) string {
+	return re.ReplaceAllStringFunc(filter, func(match string) string {
 		parts := re.FindStringSubmatch(match)
 		if len(parts) != 4 {
 			return match
@@ -193,16 +189,24 @@ func getTaskFiltersFromFilterString(filter string, filterTimezone string) (filte
 		comparator := parts[2]
 		value := strings.TrimSpace(parts[3])
 
-		// Check if the value is already quoted
+		// Already quoted — leave as-is
 		if (strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) ||
 			(strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) {
 			return field + " " + comparator + " " + value
 		}
 
-		// Quote the value
 		quotedValue := "'" + strings.ReplaceAll(value, "'", "\\'") + "'"
 		return field + " " + comparator + " " + quotedValue
 	})
+}
+
+func getTaskFiltersFromFilterString(filter string, filterTimezone string) (filters []*taskFilter, err error) {
+
+	if filter == "" {
+		return
+	}
+
+	filter = preprocessFilterString(filter)
 
 	parsedFilter, err := fexpr.Parse(filter)
 	if err != nil {
@@ -333,7 +337,7 @@ func getValueForField(field reflect.StructField, rawValue string, loc *time.Loca
 		// If this is a slice of pointers we're dealing with some property which is a relation
 		// In that case we don't really care about what the actual type is, we just cast the value to an
 		// int64 since we need the id - yes, this assumes we only ever have int64 IDs, but this is fine.
-		if field.Type.Elem().Kind() == reflect.Ptr {
+		if field.Type.Elem().Kind() == reflect.Pointer {
 			value, err = strconv.ParseInt(strings.TrimSpace(rawValue), 10, 64)
 			return
 		}

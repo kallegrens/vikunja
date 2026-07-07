@@ -38,52 +38,52 @@ import (
 // Project represents a project of tasks
 type Project struct {
 	// The unique, numeric id of this project.
-	ID int64 `xorm:"bigint autoincr not null unique pk" json:"id" param:"project"`
+	ID int64 `xorm:"bigint autoincr not null unique pk" json:"id" param:"project" readOnly:"true" doc:"The unique, numeric id of this project."`
 	// The title of the project. You'll see this in the overview.
-	Title string `xorm:"varchar(250) not null" json:"title" valid:"required,runelength(1|250)" minLength:"1" maxLength:"250"`
+	Title string `xorm:"varchar(250) not null" json:"title" valid:"required,runelength(1|250)" minLength:"1" maxLength:"250" doc:"The title of the project. You'll see this in the overview."`
 	// The description of the project.
-	Description string `xorm:"longtext null" json:"description"`
+	Description string `xorm:"longtext null" json:"description" doc:"The description of the project."`
 	// The unique project short identifier. Used to build task identifiers.
-	Identifier string `xorm:"varchar(10) null" json:"identifier" valid:"runelength(0|10)" minLength:"0" maxLength:"10"`
+	Identifier string `xorm:"varchar(10) null" json:"identifier" valid:"runelength(0|10)" minLength:"0" maxLength:"10" doc:"The unique project short identifier. Used to build task identifiers (e.g. PROJ-123)."`
 	// The hex color of this project
-	HexColor string `xorm:"varchar(6) null" json:"hex_color" valid:"runelength(0|7)" maxLength:"7"`
+	HexColor string `xorm:"varchar(6) null" json:"hex_color" valid:"runelength(0|7)" maxLength:"7" doc:"The hex color of this project, without the leading #."`
 
 	OwnerID         int64    `xorm:"bigint INDEX not null" json:"-"`
-	ParentProjectID int64    `xorm:"bigint INDEX null" json:"parent_project_id"`
+	ParentProjectID int64    `xorm:"bigint INDEX null" json:"parent_project_id" doc:"The id of the parent project. 0 if this is a top-level project."`
 	ParentProject   *Project `xorm:"-" json:"-"`
 
 	// The user who created this project.
-	Owner *user.User `xorm:"-" json:"owner" valid:"-"`
+	Owner *user.User `xorm:"-" json:"owner" valid:"-" readOnly:"true" doc:"The user who owns this project. Set by the server; ignored on write."`
 
 	// Whether a project is archived.
-	IsArchived bool `xorm:"not null default false" json:"is_archived" query:"is_archived"`
+	IsArchived bool `xorm:"not null default false" json:"is_archived" query:"is_archived" doc:"Whether the project is archived. Archived projects are read-only."`
 
 	// The id of the file this project has set as background
 	BackgroundFileID int64 `xorm:"null" json:"-"`
 	// Holds extra information about the background set since some background providers require attribution or similar. If not null, the background can be accessed at /projects/{projectID}/background
-	BackgroundInformation interface{} `xorm:"-" json:"background_information"`
+	BackgroundInformation interface{} `xorm:"-" json:"background_information" readOnly:"true" doc:"Extra information about the background (e.g. attribution). When not null, the background is available at /projects/{projectID}/background."`
 	// Contains a very small version of the project background to use as a blurry preview until the actual background is loaded. Check out https://blurha.sh/ to learn how it works.
-	BackgroundBlurHash string `xorm:"varchar(50) null" json:"background_blur_hash"`
+	BackgroundBlurHash string `xorm:"varchar(50) null" json:"background_blur_hash" readOnly:"true" doc:"A small BlurHash preview of the project background, shown until the real background loads. See https://blurha.sh/."`
 
 	// True if a project is a favorite. Favorite projects show up in a separate parent project. This value depends on the user making the call to the api.
-	IsFavorite bool `xorm:"-" json:"is_favorite"`
+	IsFavorite bool `xorm:"-" json:"is_favorite" doc:"Whether the project is a favorite of the requesting user. This value is per-user and depends on who makes the call."`
 
 	// The subscription status for the user reading this project. You can only read this property, use the subscription endpoints to modify it.
 	// Will only returned when retreiving one project.
-	Subscription *Subscription `xorm:"-" json:"subscription,omitempty"`
+	Subscription *Subscription `xorm:"-" json:"subscription,omitempty" readOnly:"true" doc:"The requesting user's subscription status for this project. Read-only here; use the subscription endpoints to change it. Only returned when retrieving a single project."`
 
 	// The position this project has when querying all projects. See the tasks.position property on how to use this.
-	Position float64 `xorm:"double null" json:"position"`
+	Position float64 `xorm:"double null" json:"position" doc:"The position of this project when listing all projects. See the tasks.position property for how positions work."`
 
-	Views []*ProjectView `xorm:"-" json:"views"`
+	Views []*ProjectView `xorm:"-" json:"views" readOnly:"true" doc:"The views configured for this project. Managed through the project view endpoints."`
 
 	Expand        ProjectExpandable `xorm:"-" json:"-" query:"expand"`
-	MaxPermission Permission        `xorm:"-" json:"max_permission"`
+	MaxPermission Permission        `xorm:"-" json:"max_permission" readOnly:"true" doc:"The maximum permission the requesting user has on this project (0 = read, 1 = read/write, 2 = admin)."`
 
 	// A timestamp when this project was created. You cannot change this value.
-	Created time.Time `xorm:"created not null" json:"created"`
+	Created time.Time `xorm:"created not null" json:"created" readOnly:"true" doc:"A timestamp when this project was created. You cannot change this value."`
 	// A timestamp when this project was last updated. You cannot change this value.
-	Updated time.Time `xorm:"updated not null" json:"updated"`
+	Updated time.Time `xorm:"updated not null" json:"updated" readOnly:"true" doc:"A timestamp when this project was last updated. You cannot change this value."`
 
 	web.CRUDable    `xorm:"-" json:"-"`
 	web.Permissions `xorm:"-" json:"-"`
@@ -448,6 +448,20 @@ func GetProjectSimpleByID(s *xorm.Session, projectID int64) (project *Project, e
 	return
 }
 
+// GetProjectSimpleByIdentifier gets a project by its textual identifier (e.g. "PROJ").
+// Identifiers are stored uppercase, so the lookup normalizes the input.
+func GetProjectSimpleByIdentifier(s *xorm.Session, identifier string) (project *Project, err error) {
+	project, exists, err := getProjectSimple(s, builder.Eq{"identifier": strings.ToUpper(identifier)})
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrProjectDoesNotExist{}
+	}
+
+	return
+}
+
 func getProjectSimple(s *xorm.Session, cond builder.Cond) (project *Project, exists bool, err error) {
 	project = &Project{}
 	exists, err = s.
@@ -458,6 +472,9 @@ func getProjectSimple(s *xorm.Session, cond builder.Cond) (project *Project, exi
 }
 
 // GetProjectSimpleByTaskID gets a project by a task id
+// Deliberately resolves soft-deleted tasks too: event listeners and hard-delete
+// paths still need the project after a soft delete, and access is already
+// enforced earlier via GetTaskSimple. Same for the ByTaskIDs variants below.
 func GetProjectSimpleByTaskID(s *xorm.Session, taskID int64) (l *Project, err error) {
 	// We need to re-init our project object, because otherwise xorm creates a "where for every item in that project object,
 	// leading to not finding anything if the id is good, but for example the title is different.
@@ -746,6 +763,15 @@ func getRawProjectsForUser(s *xorm.Session, opts *projectOptions) (projects []*P
 	return allProjects, len(allProjects), totalItems, err
 }
 
+func CreateDefaultSavedFiltersForUser(s *xorm.Session, u *user.User) error {
+	sf := &SavedFilter{
+		Title:   "My Open Tasks",
+		Filters: &TaskCollection{Filter: fmt.Sprintf("done = false && assignees = %s", u.Username)},
+	}
+
+	return sf.Create(s, u)
+}
+
 func getSavedFilterProjects(s *xorm.Session, doer *user.User, search string) (savedFiltersProjects []*Project, err error) {
 	savedFilters, err := getSavedFiltersForUser(s, doer, search)
 	if err != nil {
@@ -989,6 +1015,11 @@ func checkProjectBeforeUpdateOrDelete(s *xorm.Session, project *Project) (err er
 		}
 	}
 
+	// Identifiers are stored uppercase so lookups and the uniqueness check
+	// below behave consistently across DBs (Postgres/SQLite are
+	// case-sensitive by default, MySQL is not).
+	project.Identifier = strings.ToUpper(project.Identifier)
+
 	// Check if the identifier is unique and not empty
 	if project.Identifier != "" {
 		exists, err := s.
@@ -1018,8 +1049,17 @@ func CreateProject(s *xorm.Session, project *Project, auth web.Auth, createBackl
 	}
 
 	project.ID = 0
-	project.OwnerID = doer.ID
-	project.Owner = doer
+	if doer.IsBot() {
+		project.OwnerID = doer.BotOwnerID
+		owner, err := user.GetUserByID(s, doer.BotOwnerID)
+		if err != nil {
+			return err
+		}
+		project.Owner = owner
+	} else {
+		project.OwnerID = doer.ID
+		project.Owner = doer
+	}
 
 	err = checkProjectBeforeUpdateOrDelete(s, project)
 	if err != nil {
@@ -1031,6 +1071,18 @@ func CreateProject(s *xorm.Session, project *Project, auth web.Auth, createBackl
 	_, err = s.Insert(project)
 	if err != nil {
 		return
+	}
+
+	// Give the bot continued access to the project it created.
+	if doer.IsBot() {
+		pu := &ProjectUser{
+			ProjectID:  project.ID,
+			Username:   doer.Username,
+			Permission: PermissionAdmin,
+		}
+		if err = pu.Create(s, auth); err != nil {
+			return err
+		}
 	}
 
 	project.Position = calculateDefaultPosition(project.ID, project.Position)
@@ -1053,7 +1105,7 @@ func CreateProject(s *xorm.Session, project *Project, auth web.Auth, createBackl
 
 	events.DispatchOnCommit(s, &ProjectCreatedEvent{
 		Project: project,
-		Doer:    doer,
+		Doer:    doerFromAuth(s, auth),
 	})
 	return nil
 }
@@ -1086,6 +1138,10 @@ func RegisterUser(s *xorm.Session, u *user.User) (*user.User, error) {
 	}
 
 	if err := CreateNewProjectForUser(s, newUser); err != nil {
+		return nil, err
+	}
+
+	if err := CreateDefaultSavedFiltersForUser(s, newUser); err != nil {
 		return nil, err
 	}
 
@@ -1200,7 +1256,7 @@ func UpdateProject(s *xorm.Session, project *Project, auth web.Auth, updateProje
 
 	events.DispatchOnCommit(s, &ProjectUpdatedEvent{
 		Project: project,
-		Doer:    auth,
+		Doer:    doerFromAuth(s, auth),
 	})
 
 	l, err := GetProjectSimpleByID(s, project.ID)
@@ -1349,15 +1405,17 @@ func (p *Project) Delete(s *xorm.Session, a web.Auth) (err error) {
 		return &ErrCannotDeleteDefaultProject{ProjectID: p.ID}
 	}
 
-	// Delete all tasks on that project
+	// Hard-delete all tasks on that project, including soft-deleted ones —
+	// there is nothing to restore them into once the project is gone.
 	// Using the loop to make sure all related entities to all tasks are properly deleted as well.
-	tasks, _, _, err := getRawTasksForProjects(s, []*Project{p}, a, &taskSearchOptions{})
+	tasks := []*Task{}
+	err = s.Unscoped().Where("project_id = ?", p.ID).Find(&tasks)
 	if err != nil {
 		return
 	}
 
 	for _, task := range tasks {
-		err = task.Delete(s, a)
+		err = hardDeleteTask(s, task)
 		if err != nil {
 			return err
 		}
@@ -1431,7 +1489,7 @@ func (p *Project) Delete(s *xorm.Session, a web.Auth) (err error) {
 
 	events.DispatchOnCommit(s, &ProjectDeletedEvent{
 		Project: fullProject,
-		Doer:    a,
+		Doer:    doerFromAuth(s, a),
 	})
 
 	childProjects := []*Project{}

@@ -20,9 +20,13 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 
+	"xorm.io/builder"
 	"xorm.io/xorm"
+	"xorm.io/xorm/schemas"
 
+	"code.vikunja.io/api/pkg/db"
 	"code.vikunja.io/api/pkg/events"
 	"code.vikunja.io/api/pkg/log"
 	"code.vikunja.io/api/pkg/web"
@@ -33,9 +37,9 @@ const MinPositionSpacing = 0.01
 
 type TaskPosition struct {
 	// The ID of the task this position is for
-	TaskID int64 `xorm:"bigint not null index" json:"task_id" param:"task"`
+	TaskID int64 `xorm:"bigint not null index unique(task_view)" json:"task_id" param:"task" readOnly:"true" doc:"The numeric id of the task this position belongs to. Taken from the URL; ignored in the request body."`
 	// The project view this task is related to
-	ProjectViewID int64 `xorm:"bigint not null index" json:"project_view_id"`
+	ProjectViewID int64 `xorm:"bigint not null index unique(task_view)" json:"project_view_id" doc:"The id of the project view this position applies to. Positions are stored per view, so the same task has an independent position in each of its project's views."`
 	// The position of the task - any task project can be sorted as usual by this parameter.
 	// When accessing tasks via kanban buckets, this is primarily used to sort them based on a range
 	// We're using a float64 here to make it possible to put any task within any two other tasks (by changing the number).
@@ -44,7 +48,7 @@ type TaskPosition struct {
 	// which also leaves a lot of room for rearranging and sorting later.
 	// Positions are always saved per view. They will automatically be set if you request the tasks through a view
 	// endpoint, otherwise they will always be 0. To update them, take a look at the Task Position endpoint.
-	Position float64 `xorm:"double not null" json:"position"`
+	Position float64 `xorm:"double not null" json:"position" doc:"The task's sort position within the view, as a float so a task can be placed between any two others. To drop a task between two neighbours, set this to their midpoint. Values below the minimum spacing trigger a server-side recalculation of all positions in the view, so the stored value may differ from what you sent."`
 
 	web.CRUDable    `xorm:"-" json:"-"`
 	web.Permissions `xorm:"-" json:"-"`
@@ -70,29 +74,118 @@ func (tp *TaskPosition) refresh(s *xorm.Session) (err error) {
 	return nil
 }
 
+// upsertTaskPosition atomically inserts or updates the position row for the
+// given task and view. A separate exists-check followed by an insert races
+// with concurrent requests doing the same and violates the unique index on
+// (task_id, project_view_id).
+func upsertTaskPosition(s *xorm.Session, tp *TaskPosition) (err error) {
+	onConflict := "ON CONFLICT (task_id, project_view_id) DO UPDATE SET position = excluded.position"
+	if db.Type() == schemas.MYSQL {
+		onConflict = "ON DUPLICATE KEY UPDATE position = VALUES(position)"
+	}
+
+	// Raw SQL bypasses xorm's bean-based table-name handling, so qualify the
+	// table ourselves to honor a configured postgres schema (database.schema).
+	table := s.Engine().TableName(tp, true)
+	_, err = s.Exec(
+		"INSERT INTO "+table+" (task_id, project_view_id, position) VALUES (?, ?, ?) "+onConflict,
+		tp.TaskID, tp.ProjectViewID, tp.Position)
+	return
+}
+
+// bulkInsertTaskPositions inserts position rows in batches, tolerating rows
+// whose (task_id, project_view_id) pair already exists because a concurrent
+// transaction created them in the meantime. The overwrite flag decides who
+// wins such a conflict:
+//
+// Callers which only add rows for tasks that had none (saved filter healing,
+// the task-created listener) pass false: if another transaction beat them to
+// it, the existing row is the correct state — e.g. a position the user set
+// via drag & drop in between — and the caller's value is stale, so the row is
+// kept as is.
+//
+// The recalculation paths pass true: they rewrite every position in the view,
+// so their values are authoritative. They hold the view lock, but writers of
+// the first kind deliberately don't take it and can slip a row in between the
+// recalculation's delete and reinsert (invisible to the delete's snapshot
+// under READ COMMITTED). A plain insert would then fail on the unique index;
+// overwriting resolves the race with the recalculated value instead.
+func bulkInsertTaskPositions(s *xorm.Session, positions []*TaskPosition, overwrite bool) (err error) {
+	// Keep statements well below the parameter limits of all supported databases.
+	const batchSize = 100
+
+	var onConflict string
+	switch {
+	case db.Type() == schemas.MYSQL && overwrite:
+		onConflict = "ON DUPLICATE KEY UPDATE position = VALUES(position)"
+	case db.Type() == schemas.MYSQL:
+		// The self-assignment is a no-op update which only ignores duplicate
+		// keys, unlike INSERT IGNORE which would swallow unrelated errors too.
+		onConflict = "ON DUPLICATE KEY UPDATE position = position"
+	case overwrite:
+		onConflict = "ON CONFLICT (task_id, project_view_id) DO UPDATE SET position = excluded.position"
+	default:
+		onConflict = "ON CONFLICT (task_id, project_view_id) DO NOTHING"
+	}
+
+	// Raw SQL bypasses xorm's bean-based table-name handling, so qualify the
+	// table ourselves to honor a configured postgres schema (database.schema).
+	table := s.Engine().TableName(&TaskPosition{}, true)
+
+	for start := 0; start < len(positions); start += batchSize {
+		batch := positions[start:min(start+batchSize, len(positions))]
+
+		placeholders := make([]string, 0, len(batch))
+		args := make([]interface{}, 1, len(batch)*3+1)
+		for _, p := range batch {
+			placeholders = append(placeholders, "(?, ?, ?)")
+			args = append(args, p.TaskID, p.ProjectViewID, p.Position)
+		}
+
+		args[0] = "INSERT INTO " + table + " (task_id, project_view_id, position) VALUES " + strings.Join(placeholders, ", ") + " " + onConflict
+
+		_, err = s.Exec(args...)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// lockPositionsForViewUpdate takes a row lock on the view, serializing
+// concurrent transactions which rewrite the positions of the same view.
+// Without it, two transactions can both delete the old position rows and then
+// insert overlapping new ones, violating the unique index on
+// (task_id, project_view_id). SQLite allows only a single writer at a time and
+// does not support FOR UPDATE, so no explicit lock is needed there.
+func lockPositionsForViewUpdate(s *xorm.Session, viewID int64) (err error) {
+	if db.Type() == schemas.SQLITE {
+		return nil
+	}
+
+	table := s.Engine().TableName(&ProjectView{}, true)
+	_, err = s.Exec("SELECT id FROM "+table+" WHERE id = ? FOR UPDATE", viewID)
+	return
+}
+
 // updateTaskPosition is the internal function that performs the task position update logic
 // without dispatching events. This is used by moveTaskToDoneBuckets to avoid duplicate events.
 func updateTaskPosition(s *xorm.Session, a web.Auth, tp *TaskPosition) (err error) {
-	exists, err := s.
-		Where("task_id = ? AND project_view_id = ?", tp.TaskID, tp.ProjectViewID).
-		Exist(&TaskPosition{})
-	if err != nil {
-		return err
+	if tp.Position < MinPositionSpacing {
+		// The recalculation below will need the view lock anyway. Taking it
+		// before the upsert keeps the lock order consistent with concurrent
+		// recalculations (view lock first, then position rows), avoiding a
+		// lock-order deadlock.
+		err = lockPositionsForViewUpdate(s, tp.ProjectViewID)
+		if err != nil {
+			return err
+		}
 	}
 
-	if !exists {
-		_, err = s.Insert(tp)
-		if err != nil {
-			return
-		}
-	} else {
-		_, err = s.
-			Where("task_id = ? AND project_view_id = ?", tp.TaskID, tp.ProjectViewID).
-			Cols("project_view_id", "position").
-			Update(tp)
-		if err != nil {
-			return
-		}
+	err = upsertTaskPosition(s, tp)
+	if err != nil {
+		return err
 	}
 
 	if tp.Position < MinPositionSpacing {
@@ -151,6 +244,11 @@ func (tp *TaskPosition) Update(s *xorm.Session, a web.Auth) (err error) {
 func RecalculateTaskPositions(s *xorm.Session, view *ProjectView, a web.Auth) (err error) {
 
 	log.Debugf("Recalculating task positions for view %d", view.ID)
+
+	err = lockPositionsForViewUpdate(s, view.ID)
+	if err != nil {
+		return err
+	}
 
 	opts := &taskSearchOptions{
 		projectViewID: view.ID,
@@ -212,8 +310,15 @@ func RecalculateTaskPositions(s *xorm.Session, view *ProjectView, a web.Auth) (e
 
 	maxPosition := math.Pow(2, 32)
 	newPositions := make([]*TaskPosition, 0, len(allTasks))
+	seenTasks := make(map[int64]bool, len(allTasks))
 
 	for i, task := range allTasks {
+		// The search can return a task more than once, but the unique index
+		// on (task_id, project_view_id) allows only one row per task and view.
+		if seenTasks[task.ID] {
+			continue
+		}
+		seenTasks[task.ID] = true
 
 		currentPosition := maxPosition / float64(len(allTasks)) * (float64(i + 1))
 
@@ -231,12 +336,12 @@ func RecalculateTaskPositions(s *xorm.Session, view *ProjectView, a web.Auth) (e
 		return
 	}
 
-	count, err := s.Insert(newPositions)
+	err = bulkInsertTaskPositions(s, newPositions, true)
 	if err != nil {
 		return
 	}
 
-	log.Debugf("Inserted %d new positions for %d total tasks in view %d", count, len(allTasks), view.ID)
+	log.Debugf("Inserted %d new positions for %d total tasks in view %d", len(newPositions), len(allTasks), view.ID)
 
 	events.DispatchOnCommit(s, &TaskPositionsRecalculatedEvent{
 		NewTaskPositions: newPositions,
@@ -259,9 +364,14 @@ func getPositionsForView(s *xorm.Session, view *ProjectView) (positions []*TaskP
 func recalculateTaskPositionsForRepair(s *xorm.Session, view *ProjectView) error {
 	log.Debugf("Recalculating task positions for view %d (repair mode)", view.ID)
 
+	err := lockPositionsForViewUpdate(s, view.ID)
+	if err != nil {
+		return err
+	}
+
 	// Get all existing positions for this view, ordered by current position then task ID
 	var existingPositions []*TaskPosition
-	err := s.Where("project_view_id = ?", view.ID).
+	err = s.Where("project_view_id = ?", view.ID).
 		OrderBy("position ASC, task_id ASC").
 		Find(&existingPositions)
 	if err != nil {
@@ -291,12 +401,12 @@ func recalculateTaskPositionsForRepair(s *xorm.Session, view *ProjectView) error
 		})
 	}
 
-	count, err := s.Insert(newPositions)
+	err = bulkInsertTaskPositions(s, newPositions, true)
 	if err != nil {
 		return err
 	}
 
-	log.Debugf("Repair: inserted %d new positions for view %d", count, view.ID)
+	log.Debugf("Repair: inserted %d new positions for view %d", len(newPositions), view.ID)
 
 	events.DispatchOnCommit(s, &TaskPositionsRecalculatedEvent{
 		NewTaskPositions: newPositions,
@@ -339,6 +449,57 @@ func calculateNewPositionForTask(s *xorm.Session, a web.Auth, t *Task, view *Pro
 		ProjectViewID: view.ID,
 		Position:      calculateDefaultPosition(t.Index, position),
 	}, nil
+}
+
+type taskPositionKey struct {
+	taskID int64
+	viewID int64
+}
+
+// filterNewTaskPositions returns the positions whose (task_id, project_view_id)
+// row does not exist yet, also deduplicating within the slice. Position creation
+// during task creation can trigger a full recalculation (calculateNewPositionForTask
+// or moveTaskToDoneBuckets) that already persists rows for the new task, so inserting
+// the queued positions unconditionally would violate the unique index on
+// (task_id, project_view_id).
+func filterNewTaskPositions(s *xorm.Session, positions []*TaskPosition) ([]*TaskPosition, error) {
+	if len(positions) == 0 {
+		return positions, nil
+	}
+
+	taskIDs := make([]int64, 0, len(positions))
+	seenTask := make(map[int64]bool, len(positions))
+	for _, p := range positions {
+		if seenTask[p.TaskID] {
+			continue
+		}
+		seenTask[p.TaskID] = true
+		taskIDs = append(taskIDs, p.TaskID)
+	}
+
+	// Fetch all existing rows for the involved tasks in one query so this stays
+	// cheap when createTask runs in a loop (bulk import, project duplication).
+	existing := []*TaskPosition{}
+	err := s.In("task_id", taskIDs).Find(&existing)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[taskPositionKey]bool, len(positions)+len(existing))
+	for _, e := range existing {
+		seen[taskPositionKey{taskID: e.TaskID, viewID: e.ProjectViewID}] = true
+	}
+
+	filtered := make([]*TaskPosition, 0, len(positions))
+	for _, p := range positions {
+		key := taskPositionKey{taskID: p.TaskID, viewID: p.ProjectViewID}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		filtered = append(filtered, p)
+	}
+	return filtered, nil
 }
 
 // DeleteOrphanedTaskPositions removes task position records that reference
@@ -389,8 +550,60 @@ func createPositionsForTasksInView(s *xorm.Session, tasks []*Task, view *Project
 		})
 	}
 
-	_, err = s.Insert(&newPositions)
-	return err
+	return bulkInsertTaskPositions(s, newPositions, false)
+}
+
+// ensureTaskPositionsForSavedFilterView creates position rows for all tasks matching a saved
+// filter which don't have one in its view yet. This must run before the fetch query: healing
+// afterwards means the query sorts fresh matches last (NULL position) and they jump to the top
+// on the next fetch once the position row exists.
+func ensureTaskPositionsForSavedFilterView(s *xorm.Session, a web.Auth, projects []*Project, view *ProjectView, opts *taskSearchOptions) (err error) {
+	if len(projects) == 0 {
+		return nil
+	}
+
+	// Parse a fresh copy of the filters because convertFiltersToDBFilterCond mutates the
+	// field names in place — reusing opts.parsedFilters would double-prefix them for the
+	// subsequent fetch query.
+	parsedFilters, err := getTaskFiltersFromFilterString(opts.filter, opts.filterTimezone)
+	if err != nil {
+		return err
+	}
+
+	// Check before converting: the conversion renames the field to task_buckets.bucket_id in place.
+	joinTaskBuckets := hasBucketIDInParsedFilter(parsedFilters)
+
+	filterCond, err := convertFiltersToDBFilterCond(parsedFilters, opts.filterIncludeNulls)
+	if err != nil {
+		return err
+	}
+
+	projectIDs, _ := getProjectIDsFromProjects(projects)
+	if len(projectIDs) == 0 {
+		return nil
+	}
+
+	query := s.
+		Select("tasks.*").
+		Join("LEFT", "task_positions", "task_positions.task_id = tasks.id AND task_positions.project_view_id = ?", view.ID).
+		Where(builder.And(builder.In("tasks.project_id", projectIDs), filterCond)).
+		And("task_positions.task_id IS NULL")
+
+	if joinTaskBuckets {
+		query = query.Join("LEFT", "task_buckets", "task_buckets.task_id = tasks.id AND task_buckets.project_view_id = ?", view.ID)
+	}
+
+	tasks := []*Task{}
+	// Ordering by id keeps position assignment deterministic when multiple tasks are healed at once.
+	err = query.
+		OrderBy("tasks.id ASC").
+		Find(&tasks)
+	if err != nil {
+		sql, vals := query.LastSQL()
+		return fmt.Errorf("could not fetch unpositioned tasks, error was '%w', sql: '%v', values: %v", err, sql, vals)
+	}
+
+	return createPositionsForTasksInView(s, tasks, view, a)
 }
 
 // findPositionConflicts returns all task positions that share the same position value

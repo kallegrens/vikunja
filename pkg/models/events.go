@@ -18,7 +18,6 @@ package models
 
 import (
 	"code.vikunja.io/api/pkg/user"
-	"code.vikunja.io/api/pkg/web"
 )
 
 /////////////////
@@ -230,8 +229,8 @@ func (l *ProjectCreatedEvent) Name() string {
 
 // ProjectUpdatedEvent represents an event where a project has been updated
 type ProjectUpdatedEvent struct {
-	Project *Project `json:"project"`
-	Doer    web.Auth `json:"doer"`
+	Project *Project   `json:"project"`
+	Doer    *user.User `json:"doer"`
 }
 
 // Name defines the name for ProjectUpdatedEvent
@@ -241,8 +240,8 @@ func (p *ProjectUpdatedEvent) Name() string {
 
 // ProjectDeletedEvent represents an event where a project has been deleted
 type ProjectDeletedEvent struct {
-	Project *Project `json:"project"`
-	Doer    web.Auth `json:"doer"`
+	Project *Project   `json:"project"`
+	Doer    *user.User `json:"doer"`
 }
 
 // Name defines the name for ProjectDeletedEvent
@@ -258,7 +257,7 @@ func (p *ProjectDeletedEvent) Name() string {
 type ProjectSharedWithUserEvent struct {
 	Project *Project   `json:"project"`
 	User    *user.User `json:"user"`
-	Doer    web.Auth   `json:"doer"`
+	Doer    *user.User `json:"doer"`
 }
 
 // Name defines the name for ProjectSharedWithUserEvent
@@ -268,9 +267,9 @@ func (p *ProjectSharedWithUserEvent) Name() string {
 
 // ProjectSharedWithTeamEvent represents an event where a project has been shared with a team
 type ProjectSharedWithTeamEvent struct {
-	Project *Project `json:"project"`
-	Team    *Team    `json:"team"`
-	Doer    web.Auth `json:"doer"`
+	Project *Project   `json:"project"`
+	Team    *Team      `json:"team"`
+	Doer    *user.User `json:"doer"`
 }
 
 // Name defines the name for ProjectSharedWithTeamEvent
@@ -308,8 +307,8 @@ func (t *TeamMemberRemovedEvent) Name() string {
 
 // TeamCreatedEvent represents a TeamCreatedEvent event
 type TeamCreatedEvent struct {
-	Team *Team    `json:"team"`
-	Doer web.Auth `json:"doer"`
+	Team *Team      `json:"team"`
+	Doer *user.User `json:"doer"`
 }
 
 // Name defines the name for TeamCreatedEvent
@@ -319,8 +318,8 @@ func (t *TeamCreatedEvent) Name() string {
 
 // TeamDeletedEvent represents a TeamDeletedEvent event
 type TeamDeletedEvent struct {
-	Team *Team    `json:"team"`
-	Doer web.Auth `json:"doer"`
+	Team *Team      `json:"team"`
+	Doer *user.User `json:"doer"`
 }
 
 // Name defines the name for TeamDeletedEvent
@@ -361,4 +360,206 @@ type WebhookDeliveryEvent struct {
 // Name defines the name for WebhookDeliveryEvent
 func (w *WebhookDeliveryEvent) Name() string {
 	return "webhook.delivery"
+}
+
+// TimeEntryCreatedEvent represents a time entry being created
+type TimeEntryCreatedEvent struct {
+	TimeEntry *TimeEntry `json:"time_entry"`
+	Doer      *user.User `json:"doer"`
+}
+
+// Name defines the name for TimeEntryCreatedEvent
+func (e *TimeEntryCreatedEvent) Name() string {
+	return "time-entry.created"
+}
+
+// TimeEntryUpdatedEvent represents a time entry being updated (including a timer being stopped)
+type TimeEntryUpdatedEvent struct {
+	TimeEntry *TimeEntry `json:"time_entry"`
+	Doer      *user.User `json:"doer"`
+}
+
+// Name defines the name for TimeEntryUpdatedEvent
+func (e *TimeEntryUpdatedEvent) Name() string {
+	return "time-entry.updated"
+}
+
+// TimeEntryDeletedEvent represents a time entry being deleted
+type TimeEntryDeletedEvent struct {
+	TimeEntry *TimeEntry `json:"time_entry"`
+	Doer      *user.User `json:"doer"`
+}
+
+// Name defines the name for TimeEntryDeletedEvent
+func (e *TimeEntryDeletedEvent) Name() string {
+	return "time-entry.deleted"
+}
+
+////////////////////
+// API Token Events
+
+// API token events carry IDs only: the freshly created token struct holds the
+// raw token string, which must never end up in a message payload (the poison
+// queue logs payloads on handler failure).
+
+// APITokenIssuedEvent represents an API token being created
+type APITokenIssuedEvent struct {
+	TokenID int64 `json:"token_id"`
+	DoerID  int64 `json:"doer_id"`
+	OwnerID int64 `json:"owner_id"`
+}
+
+// Name defines the name for APITokenIssuedEvent
+func (e *APITokenIssuedEvent) Name() string {
+	return "api-token.issued"
+}
+
+// APITokenRevokedEvent represents an API token being deleted
+type APITokenRevokedEvent struct {
+	TokenID int64 `json:"token_id"`
+	DoerID  int64 `json:"doer_id"`
+}
+
+// Name defines the name for APITokenRevokedEvent
+func (e *APITokenRevokedEvent) Name() string {
+	return "api-token.revoked"
+}
+
+// APITokenUsedEvent represents an API token authenticating a request
+type APITokenUsedEvent struct {
+	TokenID int64 `json:"token_id"`
+	OwnerID int64 `json:"owner_id"`
+}
+
+// Name defines the name for APITokenUsedEvent
+func (e *APITokenUsedEvent) Name() string {
+	return "api-token.used"
+}
+
+//////////////////
+// Admin Events
+
+// Admin events cover mutations performed through the instance-admin API. They
+// exist for audit logging and are deliberately not registered as webhook
+// events — they are instance-level, not project-scoped.
+
+// AdminUserCreatedEvent represents a user being provisioned through the admin API
+type AdminUserCreatedEvent struct {
+	User *user.User `json:"user"`
+	Doer *user.User `json:"doer"`
+}
+
+// Name defines the name for AdminUserCreatedEvent
+func (e *AdminUserCreatedEvent) Name() string {
+	return "admin.user.created"
+}
+
+// AdminUserAdminGrantedEvent represents a user being promoted to instance admin
+type AdminUserAdminGrantedEvent struct {
+	User *user.User `json:"user"`
+	Doer *user.User `json:"doer"`
+}
+
+// Name defines the name for AdminUserAdminGrantedEvent
+func (e *AdminUserAdminGrantedEvent) Name() string {
+	return "admin.user.admin.granted"
+}
+
+// AdminUserAdminRevokedEvent represents a user's instance-admin flag being revoked
+type AdminUserAdminRevokedEvent struct {
+	User *user.User `json:"user"`
+	Doer *user.User `json:"doer"`
+}
+
+// Name defines the name for AdminUserAdminRevokedEvent
+func (e *AdminUserAdminRevokedEvent) Name() string {
+	return "admin.user.admin.revoked"
+}
+
+// AdminUserStatusChangedEvent represents a user's account status being changed by an admin
+type AdminUserStatusChangedEvent struct {
+	User      *user.User  `json:"user"`
+	Doer      *user.User  `json:"doer"`
+	OldStatus user.Status `json:"old_status"`
+	NewStatus user.Status `json:"new_status"`
+}
+
+// Name defines the name for AdminUserStatusChangedEvent
+func (e *AdminUserStatusChangedEvent) Name() string {
+	return "admin.user.status.changed"
+}
+
+// AdminUserPasswordSetEvent represents an admin setting a user's password.
+// It carries no password material.
+type AdminUserPasswordSetEvent struct {
+	User *user.User `json:"user"`
+	Doer *user.User `json:"doer"`
+}
+
+// Name defines the name for AdminUserPasswordSetEvent
+func (e *AdminUserPasswordSetEvent) Name() string {
+	return "admin.user.password.set"
+}
+
+// AdminUserPasswordResetSentEvent represents an admin triggering the
+// password-reset email for a user. It carries no reset token.
+type AdminUserPasswordResetSentEvent struct {
+	User *user.User `json:"user"`
+	Doer *user.User `json:"doer"`
+}
+
+// Name defines the name for AdminUserPasswordResetSentEvent
+func (e *AdminUserPasswordResetSentEvent) Name() string {
+	return "admin.user.password_reset.sent"
+}
+
+// AdminUserDeletedEvent represents a user being deleted through the admin API
+type AdminUserDeletedEvent struct {
+	User *user.User `json:"user"`
+	Doer *user.User `json:"doer"`
+	// Mode is "now" for immediate deletion or "scheduled" for the
+	// email-confirmation self-deletion flow.
+	Mode string `json:"mode"`
+}
+
+// Name defines the name for AdminUserDeletedEvent
+func (e *AdminUserDeletedEvent) Name() string {
+	return "admin.user.deleted"
+}
+
+// AdminProjectOwnerChangedEvent represents an admin reassigning a project's owner
+type AdminProjectOwnerChangedEvent struct {
+	Project    *Project   `json:"project"`
+	Doer       *user.User `json:"doer"`
+	OldOwnerID int64      `json:"old_owner_id"`
+	NewOwnerID int64      `json:"new_owner_id"`
+}
+
+// Name defines the name for AdminProjectOwnerChangedEvent
+func (e *AdminProjectOwnerChangedEvent) Name() string {
+	return "admin.project.owner.changed"
+}
+
+// AdminUsersListedEvent represents an admin reading the full user list,
+// which exposes every user's email address.
+type AdminUsersListedEvent struct {
+	Doer *user.User `json:"doer"`
+}
+
+// Name defines the name for AdminUsersListedEvent
+func (e *AdminUsersListedEvent) Name() string {
+	return "admin.users.listed"
+}
+
+// AdminAccessDeniedEvent represents an authenticated non-admin user being
+// refused on an /admin/* route — the privilege-probing signal.
+type AdminAccessDeniedEvent struct {
+	Doer   *user.User `json:"doer"`
+	Method string     `json:"method"`
+	Path   string     `json:"path"`
+}
+
+// Name defines the name for AdminAccessDeniedEvent
+func (e *AdminAccessDeniedEvent) Name() string {
+	return "admin.access.denied"
 }

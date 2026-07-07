@@ -491,8 +491,8 @@ func CreateParadeDBIndexes() error {
 	if !paradedbInstalled {
 		return nil
 	}
-	// ParadeDB only allows one bm25 index per table, so we create a single index covering both fields
-	// Use optimized configuration with fast fields and field boosting for better performance
+	// ParadeDB only allows one bm25 index per table, so we create a single index covering both fields.
+	// Fast fields speed up scoring; no field boosting is configured, title and description weigh the same.
 	indexSQL := `CREATE INDEX IF NOT EXISTS idx_tasks_paradedb ON tasks USING bm25 (id, title, description, project_id, done) 
 	WITH (
 		key_field='id',
@@ -523,6 +523,18 @@ func CreateParadeDBIndexes() error {
 	)`
 	if _, err := x.Exec(projectIndexSQL); err != nil {
 		return fmt.Errorf("could not ensure paradedb project index: %w", err)
+	}
+
+	// Create ParadeDB index for time_entries (comment search via MultiFieldSearch)
+	timeEntriesIndexSQL := `CREATE INDEX IF NOT EXISTS idx_time_entries_paradedb ON time_entries USING bm25 (id, comment)
+	WITH (
+		key_field='id',
+		text_fields='{
+			"comment": {"fast": true, "record": "freq"}
+		}'
+	)`
+	if _, err := x.Exec(timeEntriesIndexSQL); err != nil {
+		return fmt.Errorf("could not ensure paradedb time entry index: %w", err)
 	}
 
 	return nil

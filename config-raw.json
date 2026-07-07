@@ -850,6 +850,11 @@
                             "comment": "The filter to search for group objects in the ldap directory. Only used when `groupsyncenabled` is set to `true`."
                         },
                         {
+                            "key": "groupsyncuseserviceaccount",
+                            "default_value": "false",
+                            "comment": "If true, Vikunja re-binds as the service account (binddn/bindpassword) before searching for groups during group sync. Enable this when the authenticating user does not have sufficient rights to enumerate group membership in the directory."
+                        },
+                        {
                             "key": "avatarsyncattribute",
                             "default_value": "",
                             "comment": "The LDAP attribute where an image, decoded as raw bytes, can be found. If provided, Vikunja will use the value as avatar."
@@ -998,6 +1003,37 @@
             ]
         },
         {
+            "key": "audit",
+            "comment": "Audit logging writes structured JSONL records of authentication, authorization and data lifecycle events. Requires the licensed `audit_logs` feature — with `audit.enabled: true` but no active license, listeners are registered but nothing is written until a license with the feature becomes active.",
+            "children": [
+                {
+                    "key": "enabled",
+                    "default_value": "false",
+                    "comment": "Whether to enable audit logging."
+                },
+                {
+                    "key": "logfile",
+                    "default_value": "",
+                    "comment": "The file audit log entries are written to, one JSON object per line. If empty, defaults to `audit.log` in the configured log path."
+                },
+                {
+                    "key": "rotation",
+                    "children": [
+                        {
+                            "key": "maxsizemb",
+                            "default_value": "100",
+                            "comment": "Rotate the audit log file once it exceeds this size in megabytes. Set to 0 to disable size-based rotation."
+                        },
+                        {
+                            "key": "maxage",
+                            "default_value": "30",
+                            "comment": "Delete rotated audit log files older than this many days. This only applies to the local rotated files, it is not a retention policy. Set to 0 to keep rotated files forever."
+                        }
+                    ]
+                }
+            ]
+        },
+        {
             "key": "outgoingrequests",
             "children": [
                 {
@@ -1023,7 +1059,7 @@
                 {
                     "key": "enabled",
                     "default_value": "false",
-                    "comment": "If set to true, Vikunja will automatically request a TLS certificate from Let's Encrypt and use it to serve Vikunja over TLS. By enabling this option, you agree to Let's Encrypt's TOS.\nYou must configure a `service.publicurl` with a valid TLD where Vikunja is reachable to make this work. Furthermore, it is reccomened to set `service.interface` to `:443` if you're using this."
+                    "comment": "If set to true, Vikunja will automatically request a TLS certificate from Let's Encrypt and use it to serve Vikunja over TLS. By enabling this option, you agree to Let's Encrypt's TOS.\nYou must configure a `service.publicurl` with a valid TLD where Vikunja is reachable to make this work. Furthermore, it is recommended to set `service.interface` to `:443` if you're using this."
                 },
                 {
                     "key": "email",

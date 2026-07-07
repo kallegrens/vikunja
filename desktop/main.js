@@ -100,10 +100,15 @@ app.on('second-instance', (_event, argv) => {
 		return
 	}
 
-	// Focus the main window
+	// Reveal the main window. It may be hidden in the tray (not just minimized),
+	// so show() is required — focus() alone won't surface a hidden window, which
+	// made the app look dead when relaunched while running in the tray.
 	if (mainWindow) {
 		if (mainWindow.isMinimized()) mainWindow.restore()
+		mainWindow.show()
 		mainWindow.focus()
+	} else if (serverPort) {
+		createMainWindow()
 	}
 
 	// Find the deep link URL in argv
@@ -236,6 +241,11 @@ function createMainWindow() {
 	mainWindow = new BrowserWindow({
 		width: 1680,
 		height: 960,
+		// Without an explicit window icon, X11/XWayland compositors (e.g. KDE
+		// Plasma) fall back to a generic placeholder when WM_CLASS doesn't match
+		// an installed .desktop file. icon.png lives at the app root because
+		// build/ is electron-builder's buildResources dir and isn't packaged.
+		icon: path.join(__dirname, 'icon.png'),
 		webPreferences: {
 			...BASE_WEB_PREFERENCES,
 			preload: path.join(__dirname, 'preload.js'),
@@ -397,7 +407,11 @@ function toggleQuickEntry() {
 // ─── System tray ─────────────────────────────────────────────────────
 function setupTray() {
 	if (!tray) {
-		const iconPath = path.join(__dirname, 'build', 'icon.png')
+		// NOTE: load the icon from the app root, not build/. The build/ directory is
+		// electron-builder's buildResources dir and is NOT packaged into the app, so
+		// referencing build/icon.png here works in dev but yields an empty tray icon
+		// in packaged releases (see issue #2668).
+		const iconPath = path.join(__dirname, 'icon.png')
 		const icon = nativeImage.createFromPath(iconPath).resize({width: 16, height: 16})
 		tray = new Tray(icon)
 		tray.setToolTip('Vikunja')
@@ -539,3 +553,14 @@ app.on('window-all-closed', () => {
 		app.quit()
 	}
 })
+
+// Quit on termination signals (DE/systemd shutdown, `kill`). Without an explicit
+// handler the app ignores SIGTERM because the tray and express server keep the
+// event loop alive — leaving users to `kill -9`. isQuitting must be set first so
+// the hide-to-tray close handler doesn't swallow the quit.
+for (const signal of ['SIGINT', 'SIGTERM']) {
+	process.on(signal, () => {
+		isQuitting = true
+		app.quit()
+	})
+}

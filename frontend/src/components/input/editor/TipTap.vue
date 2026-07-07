@@ -3,78 +3,83 @@
 		ref="tiptapInstanceRef"
 		class="tiptap"
 	>
-		<!-- Using v-show instead of v-if to avoid unmounting which causes race condition
-			 with tiptap's DOM manipulation. See: https://github.com/ueberdosis/tiptap/issues/7342 -->
-		<EditorToolbar
-			v-if="editor"
-			v-show="isEditing"
-			:editor="editor"
-			@imageUploadClicked="triggerImageInput"
-		/>
-		<BubbleMenu
-			v-if="editor"
-			v-show="isEditing"
-			:editor="editor"
+		<div
+			class="tiptap__wrapper"
+			:class="{'tiptap__wrapper-is-editing': isEditing}"
 		>
-			<div class="editor-bubble__wrapper">
-				<BaseButton
-					v-tooltip="$t('input.editor.bold')"
-					class="editor-bubble__button"
-					:class="{ 'is-active': editor.isActive('bold') }"
-					@click="() => editor?.chain().focus().toggleBold().run()"
-				>
-					<Icon :icon="['fas', 'bold']" />
-				</BaseButton>
-				<BaseButton
-					v-tooltip="$t('input.editor.italic')"
-					class="editor-bubble__button"
-					:class="{ 'is-active': editor.isActive('italic') }"
-					@click="() => editor?.chain().focus().toggleItalic().run()"
-				>
-					<Icon :icon="['fas', 'italic']" />
-				</BaseButton>
-				<BaseButton
-					v-tooltip="$t('input.editor.underline')"
-					class="editor-bubble__button"
-					:class="{ 'is-active': editor.isActive('underline') }"
-					@click="() => editor?.chain().focus().toggleUnderline().run()"
-				>
-					<Icon :icon="['fas', 'underline']" />
-				</BaseButton>
-				<BaseButton
-					v-tooltip="$t('input.editor.strikethrough')"
-					class="editor-bubble__button"
-					:class="{ 'is-active': editor.isActive('strike') }"
-					@click="() => editor?.chain().focus().toggleStrike().run()"
-				>
-					<Icon :icon="['fas', 'strikethrough']" />
-				</BaseButton>
-				<BaseButton
-					v-tooltip="$t('input.editor.code')"
-					class="editor-bubble__button"
-					:class="{ 'is-active': editor.isActive('code') }"
-					@click="() => editor?.chain().focus().toggleCode().run()"
-				>
-					<Icon :icon="['fas', 'code']" />
-				</BaseButton>
-				<BaseButton
-					v-tooltip="$t('input.editor.link')"
-					class="editor-bubble__button"
-					:class="{ 'is-active': editor.isActive('link') }"
-					@click="setLink"
-				>
-					<Icon :icon="['fas', 'link']" />
-				</BaseButton>
-			</div>
-		</BubbleMenu>
+			<!-- Using v-show instead of v-if to avoid unmounting which causes race condition
+			 with tiptap's DOM manipulation. See: https://github.com/ueberdosis/tiptap/issues/7342 -->
+			<EditorToolbar
+				v-if="editor"
+				v-show="isEditing"
+				:editor="editor"
+				@imageUploadClicked="triggerImageInput"
+			/>
+			<BubbleMenu
+				v-if="editor"
+				v-show="isEditing"
+				:editor="editor"
+			>
+				<div class="editor-bubble__wrapper">
+					<BaseButton
+						v-tooltip="$t('input.editor.bold')"
+						class="editor-bubble__button"
+						:class="{ 'is-active': editor.isActive('bold') }"
+						@click="() => editor?.chain().focus().toggleBold().run()"
+					>
+						<Icon :icon="['fas', 'bold']" />
+					</BaseButton>
+					<BaseButton
+						v-tooltip="$t('input.editor.italic')"
+						class="editor-bubble__button"
+						:class="{ 'is-active': editor.isActive('italic') }"
+						@click="() => editor?.chain().focus().toggleItalic().run()"
+					>
+						<Icon :icon="['fas', 'italic']" />
+					</BaseButton>
+					<BaseButton
+						v-tooltip="$t('input.editor.underline')"
+						class="editor-bubble__button"
+						:class="{ 'is-active': editor.isActive('underline') }"
+						@click="() => editor?.chain().focus().toggleUnderline().run()"
+					>
+						<Icon :icon="['fas', 'underline']" />
+					</BaseButton>
+					<BaseButton
+						v-tooltip="$t('input.editor.strikethrough')"
+						class="editor-bubble__button"
+						:class="{ 'is-active': editor.isActive('strike') }"
+						@click="() => editor?.chain().focus().toggleStrike().run()"
+					>
+						<Icon :icon="['fas', 'strikethrough']" />
+					</BaseButton>
+					<BaseButton
+						v-tooltip="$t('input.editor.code')"
+						class="editor-bubble__button"
+						:class="{ 'is-active': editor.isActive('code') }"
+						@click="() => editor?.chain().focus().toggleCode().run()"
+					>
+						<Icon :icon="['fas', 'code']" />
+					</BaseButton>
+					<BaseButton
+						v-tooltip="$t('input.editor.link')"
+						class="editor-bubble__button"
+						:class="{ 'is-active': editor.isActive('link') }"
+						@click="setLink"
+					>
+						<Icon :icon="['fas', 'link']" />
+					</BaseButton>
+				</div>
+			</BubbleMenu>
 
-		<EditorContent
-			class="tiptap__editor"
-			:class="{'tiptap__editor-is-edit-enabled': isEditing}"
-			:editor="editor"
-			@dblclick="setEditIfApplicable()"
-			@click="focusIfEditing()"
-		/>
+			<EditorContent
+				class="tiptap__editor"
+				:class="{'tiptap__editor-is-edit-enabled': isEditing}"
+				:editor="editor"
+				@dblclick="setEditIfApplicable()"
+				@click="focusIfEditing()"
+			/>
+		</div>
 
 		<input
 			v-if="isEditing"
@@ -166,6 +171,7 @@ import Mention from '@tiptap/extension-mention'
 
 import {TaskList} from '@tiptap/extension-list'
 import {TaskItemWithId} from './taskItemWithId'
+import {BlockquoteWithCommentId} from './blockquoteWithCommentId'
 import HardBreak from '@tiptap/extension-hard-break'
 
 import Commands from './commands'
@@ -417,7 +423,9 @@ const extensions : Extensions = [
 	StarterKit.configure({
 		codeBlock: false,
 		hardBreak: false,
+		blockquote: false,
 	}),
+	BlockquoteWithCommentId,
 
 	CodeBlockLowlight.configure({
 		lowlight: createLowlight(common),
@@ -719,7 +727,7 @@ async function addImage(event: Event) {
 		return
 	}
 
-	const url = await inputPrompt(event.target.getBoundingClientRect())
+	const url = await inputPrompt(event.target.getBoundingClientRect(), '', editor.value)
 
 	if (url) {
 		editor.value?.chain().focus().setImage({src: url}).run()
@@ -774,6 +782,24 @@ function setModeAndValue(value: string) {
 		emitUpdate: false,
 	})
 }
+
+// Replace the editor content with a reply draft (prefilled blockquote + empty
+// paragraph) and enter edit mode immediately so the user can start typing.
+// Returns synchronously after the next tick to let DOM updates settle.
+async function setReplyContent(value: string) {
+	if (!editor.value) return
+	editor.value.commands.setContent(value, {
+		...defaultSetContentOptions,
+		emitUpdate: false,
+	})
+	internalMode.value = 'edit'
+	modelValue.value = editor.value.getHTML()
+	contentHasChanged.value = true
+	await nextTick()
+	editor.value.commands.focus('end')
+}
+
+defineExpose({setReplyContent})
 
 
 // See https://github.com/github/hotkey/discussions/85#discussioncomment-5214660
@@ -888,19 +914,31 @@ watch(
 </script>
 
 <style lang="scss">
-.tiptap__editor {
-	transition: box-shadow $transition;
+.tiptap__wrapper {
+	// Transparent until focused so the box size never changes and the page stays flat, same pattern as .input.title
+	border: 1px solid transparent;
 	border-radius: $radius;
-	
+	transition: border-color $transition;
+
+	// The is-editing guard prevents a border flash when focusing checkboxes in preview mode
+	&.tiptap__wrapper-is-editing:focus-within {
+		border-color: var(--primary);
+		
+		.editor-toolbar {
+			border-end-start-radius: 0;
+			border-end-end-radius: 0;
+			border-color: transparent;
+			border-block-end-color: var(--grey-200);
+		}
+	}
+}
+
+.tiptap__editor {
 	&.tiptap__editor-is-edit-enabled {
 		min-block-size: 10rem;
 
 		.ProseMirror {
 			padding: .5rem;
-		}
-
-		&:focus-within, &:focus {
-			box-shadow: 0 0 0 2px hsla(var(--primary-hsl), 0.5);
 		}
 
 		ul[data-type='taskList'] li > div {
